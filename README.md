@@ -207,9 +207,57 @@ Truy cập `http://localhost:8080`, tìm `vietjobs_pipeline` và kích hoạt th
 
 ## 7. Cấu trúc thư mục
 
-> **[CHÈN CẤU TRÚC THƯ MỤC DỰ ÁN TẠI ĐÂY]**
->
-> Cập nhật phần này sau khi chốt danh sách file sẽ đưa lên GitHub. Không đưa `.env`, `profiles.yml`, `.venv`, file CSV nguồn hoặc file backup tạm vào cấu trúc công khai.
+Vietnam-Job-Market-Intelligence/
+│
+├── airflow/
+│   ├── dags/
+│   │   └── vietjobs_pipeline.py
+│   └── Dockerfile
+│
+├── dashboards/
+│   ├── app.py
+│   └── db.py
+│
+├── docs/
+│   ├── images/
+│   │   ├── 01-system-architecture.png
+│   │   ├── 02-airflow-dag-success.png
+│   │   ├── 03-dbt-test-success.png
+│   │   ├── 04-streamlit-dashboard.png
+│   │   └── 05-data.png
+│   ├── architecture.md
+│   └── source_audit.md
+│
+├── sql/
+│   └── init_raw_vietjobs.sql
+│
+├── src/
+│   ├── ingestion/
+│   │   └── load_vietjobs.py
+│   └── validation/
+│       ├── inspect_it_skills.py
+│       ├── inspect_salary_anomalies.py
+│       ├── inspect_source_data.py
+│       ├── inspect_special_values.py
+│       ├── profile_dataset.py
+│       └── profile_it_subset.py
+│
+├── vietjobs_dbt/
+│   ├── models/
+│   │   ├── staging/
+│   │   │   ├── stg_vietjobs.sql
+│   │   │   └── schema.yml
+│   │   └── marts/
+│   │       ├── mart_category_summary.sql
+│   │       └── mart_contract_summary.sql
+│   └── dbt_project.yml
+│
+├── .env.example
+├── .gitignore
+├── airflow-docker-compose.yml
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
 
 ## 8. Kiểm thử và giới hạn
 

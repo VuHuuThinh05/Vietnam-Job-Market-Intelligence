@@ -95,7 +95,7 @@ DAG `vietjobs_pipeline` gồm ba task tuần tự: `ingest_vietjobs`, `dbt_run` 
 
 dbt thực hiện các kiểm thử chất lượng đã khai báo trong `schema.yml`. Ảnh minh chứng ghi lại kết quả chạy kiểm thử tại môi trường phát triển.
 
-![Kết quả kiểm thử dbt](docs/images/03-dbt-test-success.png)
+![Kết quả kiểm thử dbt](docs/images/03-dbt-test-success-.png)
 
 ### 5.3. Dashboard — Phân tích dữ liệu
 
@@ -207,6 +207,7 @@ Truy cập `http://localhost:8080`, tìm `vietjobs_pipeline` và kích hoạt th
 
 ## 7. Cấu trúc thư mục
 
+```text
 Vietnam-Job-Market-Intelligence/
 │
 ├── airflow/
@@ -222,7 +223,7 @@ Vietnam-Job-Market-Intelligence/
 │   ├── images/
 │   │   ├── 01-system-architecture.png
 │   │   ├── 02-airflow-dag-success.png
-│   │   ├── 03-dbt-test-success.png
+│   │   ├── 03-dbt-test-success-.png
 │   │   ├── 04-streamlit-dashboard.png
 │   │   └── 05-data.png
 │   ├── architecture.md
@@ -258,6 +259,7 @@ Vietnam-Job-Market-Intelligence/
 ├── docker-compose.yml
 ├── requirements.txt
 └── README.md
+```
 
 ## 8. Kiểm thử và giới hạn
 

@@ -1,66 +1,153 @@
 # Vietnam Job Market Intelligence
 
-A local, end-to-end **batch data engineering portfolio project** built with **Python, PostgreSQL, dbt, Apache Airflow, Docker Compose, Streamlit, and Metabase**.
+**Dự án Data Engineering end-to-end** phân tích dữ liệu tuyển dụng Việt Nam bằng **Python, PostgreSQL, dbt, Apache Airflow, Docker Compose, Streamlit và Metabase**.
 
-> **Scope:** Historical VietJobs dataset; this project does **not** fetch current vacancies. Airflow runs on demand (`schedule=None`), not on a recurring schedule.
+> **Phạm vi:** Đây là pipeline xử lý **dữ liệu lịch sử từ tệp CSV**, không phải hệ thống cập nhật tin tuyển dụng theo thời gian thực. Airflow được kích hoạt thủ công (`schedule=None`).
 
-## Overview
+## 1. Tổng quan
 
-The source CSV contains **48,092 job records, 18 fields, and 16 occupational categories** in the locally profiled dataset. This project validates and loads the raw CSV, transforms it into analytical views, executes data-quality checks, and visualizes useful distributions.
+Dữ liệu VietJobs đã được kiểm tra tại môi trường phát triển gồm **48.092 bản ghi, 18 cột và 16 nhóm ngành nghề**. Hệ thống thực hiện kiểm tra dữ liệu nguồn, nạp vào PostgreSQL, chuẩn hóa và tổng hợp bằng dbt, kiểm thử chất lượng dữ liệu và hiển thị dashboard.
 
-**Questions addressed:** Which categories and location labels occur most often? How many jobs provide salary ranges versus negotiable salaries? How do salary midpoints differ across categories? Which technical skills and contracts are most common? Where is source data incomplete?
+**Các câu hỏi phân tích:** Ngành nghề và địa điểm nào xuất hiện nhiều? Bao nhiêu tin công khai lương hoặc để mức thỏa thuận? Phân bố khoảng lương, loại hợp đồng và kỹ năng chuyên môn ra sao? Trường dữ liệu nào thiếu thông tin?
 
-Source: [VietJobs dataset](https://huggingface.co/datasets/dinhieufam/VietJobs) and [original project](https://github.com/VinNLP/VietJobs). The large CSV is deliberately excluded from Git. Verify its usage conditions before redistribution.
+Nguồn: [VietJobs trên Hugging Face](https://huggingface.co/datasets/dinhieufam/VietJobs) · [Dự án gốc](https://github.com/VinNLP/VietJobs). Tệp CSV không được đưa lên GitHub; cần kiểm tra điều kiện sử dụng trước khi phân phối lại.
 
-## System architecture
+## 2. Kiến trúc và các luồng xử lý
 
-[View complete system architecture, processing flow and logical ERD](docs/architecture.md).
+Các sơ đồ dưới đây được **tách từ sơ đồ tổng hợp ban đầu** thành ba góc nhìn để dễ đọc và trình bày khi phỏng vấn. Mũi tên nét liền biểu diễn luồng dữ liệu; nét đứt biểu diễn điều phối hoặc công cụ kiểm tra hỗ trợ.
+
+### 2.1. System Architecture — Kiến trúc hệ thống
 
 ```mermaid
 flowchart LR
-  CSV["VietJobs.csv"] --> ING["Python ingestion"] --> RAW[("PostgreSQL raw_vietjobs")]
-  AF["Airflow DAG: manual trigger"] -.orchestrates.-> ING
-  AF -.orchestrates.-> DBT["dbt run + test"]
-  RAW --> DBT --> STG[("analytics.stg_vietjobs")]
-  STG --> MARTS[("2 analytical marts")]
-  STG --> UI["Streamlit"]
-  MARTS --> META["Metabase"]
+  CSV["VietJobs CSV"] --> ING["Python Ingestion"]
+  ING --> RAW[("PostgreSQL<br/>public.raw_vietjobs")]
+  RAW --> DBT["dbt Core"]
+  DBT --> STG[("analytics.stg_vietjobs")]
+  STG --> CAT[("mart_category_summary")]
+  STG --> CON[("mart_contract_summary")]
+  STG --> APP["Streamlit + Plotly"]
+  CAT --> BI["Metabase"]
+  CON --> BI
+  AF["Apache Airflow<br/>kích hoạt thủ công"] -. "điều phối ingestion" .-> ING
+  AF -. "dbt run / test" .-> DBT
 ```
 
-## Stack and components
+- **Python Ingestion:** kiểm tra cấu trúc CSV, tải dữ liệu vào bảng tạm và nạp vào bảng raw theo transaction.
+- **PostgreSQL:** lưu dữ liệu nguồn và các view phân tích.
+- **dbt:** chuẩn hóa dữ liệu, xác định trạng thái lương và tạo hai bảng tổng hợp dạng view.
+- **Airflow:** điều phối ba task tuần tự; không chạy lịch định kỳ.
+- **Streamlit:** đọc staging view để phân tích; **Metabase:** hỗ trợ khai thác các mart.
 
-| Layer | Implementation |
-| --- | --- |
-| Ingestion | `src/ingestion/load_vietjobs.py`; psycopg and PostgreSQL COPY |
-| Raw storage | PostgreSQL 16; `public.raw_vietjobs` |
-| Transformation | dbt Core + dbt-postgres; views in `analytics` |
-| Orchestration | Airflow 2.10.5; `vietjobs_pipeline` |
-| Dashboard | Streamlit, pandas, Plotly |
-| Optional BI | Metabase |
-| Local services | Docker Compose |
+### 2.2. Data Pipeline Flow — Luồng thực thi
 
-The DAG executes **`ingest_vietjobs → dbt_run → dbt_test`**, with retry configuration and `schedule=None`. Previously observed local runs completed successfully; the GitHub repository itself is not evidence of a fresh execution after checkout.
+```mermaid
+flowchart TD
+  START["Kích hoạt thủ công DAG vietjobs_pipeline"] --> ING["ingest_vietjobs<br/>load_vietjobs.py --replace"]
+  ING --> CHECK["Kiểm tra CSV và số dòng"]
+  CHECK --> TEMP["COPY vào bảng tạm PostgreSQL"]
+  TEMP --> VALID{"Dữ liệu hợp lệ?"}
+  VALID -- "Không" --> FAIL["Báo lỗi và rollback"]
+  VALID -- "Có" --> RAW["Thay dữ liệu public.raw_vietjobs<br/>và commit"]
+  RAW --> RUN["dbt_run<br/>staging và marts"]
+  RUN --> TEST["dbt_test<br/>not_null / unique"]
+  TEST --> END{"Tests thành công?"}
+  END -- "Có" --> READY["Các view sẵn sàng cho dashboard"]
+  END -- "Không" --> LOG["Kiểm tra log Airflow / dbt"]
+```
 
-## Data model
+**Lưu ý:** Nếu dbt thất bại sau khi ingestion đã commit, PostgreSQL **không tự động hoàn tác** lần nạp dữ liệu raw đó.
 
-| Model | Grain | Responsibility |
+### 2.3. Source Profiling — Các công cụ kiểm tra hỗ trợ
+
+Sơ đồ gốc còn có các script kiểm tra dữ liệu. Chúng **không phải các task của DAG Airflow**, mà là những công cụ chạy riêng khi cần kiểm tra nguồn.
+
+```mermaid
+flowchart LR
+  CSV["VietJobs CSV"] -. "phân tích độc lập" .-> V["src/validation/"]
+  V --> P["profile_dataset.py"]
+  V --> S["inspect_source_data.py"]
+  V --> A["inspect_salary_anomalies.py"]
+  V --> X["inspect_special_values.py"]
+  V --> IT["inspect_it_skills.py<br/>profile_it_subset.py"]
+```
+
+### 2.4. ERD — Mô hình dữ liệu phân tích
+
+```mermaid
+erDiagram
+  RAW_VIETJOBS {
+    text job_title
+    text category
+    text location
+    text contract_type
+    int salary_min
+    int salary_max
+    text salary_avg
+  }
+  STG_VIETJOBS {
+    text job_title
+    text category
+    text location
+    text contract_type
+    int salary_min
+    int salary_max
+    text salary_status
+  }
+  MART_CATEGORY_SUMMARY {
+    text category
+    bigint total_jobs
+    bigint negotiable_jobs
+    bigint jobs_with_salary
+    numeric avg_salary_midpoint_million
+  }
+  MART_CONTRACT_SUMMARY {
+    text category
+    text contract_type
+    bigint total_jobs
+    bigint negotiable_jobs
+    bigint jobs_with_salary
+  }
+  RAW_VIETJOBS ||--|| STG_VIETJOBS : "chuẩn hóa từng bản ghi"
+  STG_VIETJOBS }o--|| MART_CATEGORY_SUMMARY : "tổng hợp theo ngành"
+  STG_VIETJOBS }o--|| MART_CONTRACT_SUMMARY : "tổng hợp theo ngành và hợp đồng"
+```
+
+Đây là **ERD logic / data lineage**, không phải sơ đồ khóa ngoại: `raw_vietjobs` là bảng vật lý, còn staging và marts là các **dbt view**. Sơ đồ chỉ hiển thị các trường tiêu biểu; bảng raw thực tế có 18 cột. [Xem giải thích chi tiết](docs/architecture.md).
+
+## 3. Công nghệ sử dụng
+
+| Thành phần | Công nghệ | Vai trò |
 | --- | --- | --- |
-| `public.raw_vietjobs` | Original source record | 18 source columns |
-| `analytics.stg_vietjobs` | One row per raw record | Text normalization; salary classification |
-| `analytics.mart_category_summary` | Category | Job counts and salary availability/statistics |
-| `analytics.mart_contract_summary` | Category + contract type | Job and salary-availability counts |
+| Nạp dữ liệu | Python, psycopg, PostgreSQL COPY | Kiểm tra và tải CSV |
+| Lưu trữ | PostgreSQL 16 | Bảng raw và các view |
+| Chuyển đổi | dbt Core, dbt-postgres | Staging, marts, data tests |
+| Điều phối | Apache Airflow 2.10.5 | DAG `vietjobs_pipeline` |
+| Dashboard | Streamlit, pandas, Plotly | Phân tích tương tác |
+| BI bổ sung | Metabase | Truy vấn các mart |
+| Môi trường | Docker Compose | PostgreSQL, Metabase, Airflow |
 
-`salary_status` is derived in dbt: `negotiable` for zero/zero salary bounds with `salary_avg = 'Thoả thuận'`; `unavailable` for remaining zero/zero bounds; `invalid_range` for positive salary minimum greater than the maximum; and `provided` for other cases.
+## 4. Mô hình dữ liệu và quy tắc nghiệp vụ
 
-**Data caveats:** Missing fields can mean "not required" and are not necessarily errors. Some salary bounds are inconsistent; the dashboard excludes inverted ranges from midpoint calculations. Location labels are unstandardized in the compact dashboard. Salary units should be verified against source documentation before using figures in comparisons. No reliable per-record posting timeline is available.
+| Bảng / View | Mức chi tiết | Nội dung |
+| --- | --- | --- |
+| `public.raw_vietjobs` | Mỗi bản ghi CSV | 18 cột dữ liệu gốc |
+| `analytics.stg_vietjobs` | Mỗi bản ghi raw | Chuẩn hóa chuỗi và `salary_status` |
+| `analytics.mart_category_summary` | Theo ngành | Số tin, địa điểm, trạng thái và mức lương |
+| `analytics.mart_contract_summary` | Theo ngành và hợp đồng | Số tin và trạng thái lương |
 
-## Quick start (Windows PowerShell)
+Trạng thái lương do dbt tính gồm: `negotiable` (0/0 và `salary_avg = 'Thoả thuận'`), `unavailable` (0/0 nhưng không phải thỏa thuận), `invalid_range` (mức tối đa thấp hơn tối thiểu dương), và `provided` (các trường hợp còn lại).
 
-### Prerequisites
+**Giới hạn phân tích:** Giá trị thiếu đôi khi có nghĩa là *không yêu cầu*, không nhất thiết là lỗi. Dashboard mới dùng nhãn địa điểm từ nguồn, chưa chuẩn hóa địa giới hành chính. Cần xác nhận đơn vị lương từ nguồn trước khi diễn giải kết quả. Dữ liệu không đủ cơ sở để kết luận xu hướng tuyển dụng theo thời gian.
 
-Python 3.11, Git, Docker Desktop/Compose, and the VietJobs source CSV. Commands below assume the repository root as the current working directory.
+## 5. Cài đặt và chạy trên Windows
 
-### 1. Clone, configure and prepare the source file
+### Yêu cầu
+
+- Git, Python 3.11, Docker Desktop và Docker Compose.
+- Tải VietJobs CSV từ nguồn và lưu vào `data/raw/external/VietJobs.csv`.
+
+### Bước 1 — Tải dự án và cấu hình
 
 ```powershell
 git clone https://github.com/VuHuuThinh05/Vietnam-Job-Market-Intelligence.git
@@ -69,15 +156,9 @@ Copy-Item .env.example .env
 New-Item -ItemType Directory -Force data/raw/external
 ```
 
-Edit `.env` with a **local development password** and ensure `POSTGRES_PASSWORD` matches `DB_PASSWORD`. Put the downloaded file at:
+Sửa `.env` để `POSTGRES_PASSWORD` và `DB_PASSWORD` khớp với mật khẩu PostgreSQL thực tế. Không commit tệp này. Với volume đã có dữ liệu, thay `POSTGRES_PASSWORD` trong `.env` **không tự đổi mật khẩu tài khoản hiện tại**.
 
-```text
-data/raw/external/VietJobs.csv
-```
-
-The source CSV is not committed. PostgreSQL only applies `POSTGRES_PASSWORD` when initially creating a fresh data volume; changing this value later does not reset the password of an existing user.
-
-### 2. Start PostgreSQL and Metabase
+### Bước 2 — Khởi động PostgreSQL và Metabase
 
 ```powershell
 docker compose config --quiet
@@ -85,22 +166,22 @@ docker compose up -d
 docker compose ps
 ```
 
-On a new database, create the raw table once before ingestion:
+Với database mới, tạo bảng raw một lần:
 
 ```powershell
 Get-Content .\sql\init_raw_vietjobs.sql | docker exec -i vietjobs-postgres psql -U vietjobs -d vietjobs
 ```
 
-If you change `POSTGRES_USER` or `POSTGRES_DB`, adjust the command accordingly.
+Nếu đổi tên database/user trong `.env`, sửa lại lệnh cho phù hợp.
 
-### 3. Install dependencies and expose local environment variables
+### Bước 3 — Cài Python và biến môi trường
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 
-# Populate PowerShell environment variables from local .env (simple KEY=VALUE lines).
+# Nạp các cặp KEY=VALUE từ .env vào phiên PowerShell hiện tại
 Get-Content .env | ForEach-Object {
   if ($_ -match '^\s*([^#=\s]+)=(.*)$') {
     [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
@@ -108,11 +189,11 @@ Get-Content .env | ForEach-Object {
 }
 ```
 
-**Important:** `.env` is a local Docker Compose configuration file; running Python or Streamlit from PowerShell does not automatically load it unless variables are exported as above.
+Python/Streamlit chạy trên máy host **không tự đọc `.env`**; vì vậy cần xuất biến môi trường trước khi chạy.
 
-### 4. Configure dbt
+### Bước 4 — Cấu hình và chạy dbt
 
-Create a local, Git-ignored `profiles.yml` at the project root:
+Tạo `profiles.yml` tại thư mục gốc (đã được Git bỏ qua):
 
 ```yaml
 vietjobs_dbt:
@@ -129,8 +210,6 @@ vietjobs_dbt:
       threads: 4
 ```
 
-Run ingestion and transformations:
-
 ```powershell
 python .\src\ingestion\load_vietjobs.py
 dbt debug --project-dir .\vietjobs_dbt --profiles-dir .
@@ -138,32 +217,30 @@ dbt run --project-dir .\vietjobs_dbt --profiles-dir .
 dbt test --project-dir .\vietjobs_dbt --profiles-dir .
 ```
 
-For a later explicit refresh, use `python .\src\ingestion\load_vietjobs.py --replace`. Its database transaction protects against partial raw-table replacement.
+Nếu cần nạp lại dữ liệu, dùng `python .\src\ingestion\load_vietjobs.py --replace`.
 
-### 5. Launch the compact Streamlit dashboard
+### Bước 5 — Mở dashboard
 
 ```powershell
 streamlit run .\dashboards\app.py
 ```
 
-The dashboard offers **Overview, Salary, Skills & contracts, and Data quality** tabs, plus record search. It reads `analytics.stg_vietjobs` and uses `DB_PASSWORD` from the running shell.
+Dashboard rút gọn gồm bốn tab: **Overview, Salary, Skills & contracts, Data quality**, kèm bộ lọc và tra cứu bản ghi. Metabase chạy tại `http://localhost:3000`; từ container Metabase, host PostgreSQL là `postgres` trong cùng Docker Compose network.
 
-Metabase is available locally at `http://localhost:3000`. To connect from the Metabase container, configure PostgreSQL host `postgres`, port `5432`, and the credentials from your environment, assuming both services share the default Compose network.
-
-### Optional: Run the entire batch with Airflow
+### Bước 6 — Chạy toàn bộ pipeline qua Airflow (tùy chọn)
 
 ```powershell
 docker compose -f .\airflow-docker-compose.yml up -d --build
 ```
 
-Open `http://localhost:8080`, locate `vietjobs_pipeline`, enable/unpause it if needed, and **trigger it manually**. The Airflow DAG runs ingestion with `--replace`, followed by `dbt run` and `dbt test`. Both `.env` and `profiles.yml` must be present in the mounted project folder. The Airflow setup uses `host.docker.internal` and targets Windows Docker Desktop; additional configuration may be needed on other systems.
+Mở `http://localhost:8080`, tìm DAG `vietjobs_pipeline`, bỏ trạng thái tạm dừng nếu cần rồi **Trigger DAG**. Pipeline chạy `ingest_vietjobs → dbt_run → dbt_test`. Cần có `.env`, `profiles.yml` và CSV ở vị trí quy định. Cấu hình hiện tại dùng `host.docker.internal` phù hợp với Docker Desktop trên Windows.
 
-## Repository layout
+## 6. Cấu trúc thư mục
 
 ```text
 airflow/
-  dags/vietjobs_pipeline.py
   Dockerfile
+  dags/vietjobs_pipeline.py
 dashboards/
   app.py
   db.py
@@ -187,15 +264,13 @@ requirements.txt
 README.md
 ```
 
-## Testing and verification
+## 7. Kiểm thử và tình trạng dự án
 
-- Ingestion verifies CSV schema, record counts, and numeric salary bounds, and uses a transaction.
-- dbt includes `not_null` and `unique` data tests for selected staging/mart fields; **7 tests** were previously reported as passing in the local environment.
-- Airflow includes three connected tasks. A previous manual run was reported successful, but CI-based automation, scheduled ingestion, and independent fresh-clone verification are **not** claimed.
-- Streamlit dashboard should be reviewed against the source data after each dashboard change.
+- **Ingestion:** kiểm tra header CSV, số cột, số bản ghi và dữ liệu số; thay dữ liệu raw trong transaction.
+- **dbt:** có kiểm thử `not_null` và `unique`; trước đây đã ghi nhận **7 bài kiểm thử thành công** tại máy phát triển.
+- **Airflow:** DAG gồm ba task nối tiếp; trước đây đã chạy thành công khi kích hoạt thủ công.
+- **Dashboard:** đã được rút gọn mã nguồn; **cần kiểm tra lại trực tiếp trên dữ liệu PostgreSQL trước khi gộp nhánh**.
 
-## Remaining limitations and improvements
+## 8. Giới hạn và hướng cải thiện
 
-This is a portfolio-scale local batch workflow. The source is historical and static; there is no recurring API ingestion or live market coverage. Missing values and categorical skill strings require domain-specific interpretation. The dashboard uses the raw source location labels rather than geocoded regions. An automated test suite for Python ingestion/dashboard helpers and reproducible screenshot evidence would improve the handoff.
-
-The source dataset's redistribution rights should be confirmed independently of this code repository.
+Dự án xử lý batch trên dữ liệu tĩnh, chưa có nguồn cập nhật định kỳ hay CI. Có thể bổ sung kiểm thử Python tự động, ảnh minh chứng từ Streamlit/Airflow/dbt và xác minh khả năng chạy trên một máy mới. Quyền phân phối lại dataset cần được kiểm tra độc lập với mã nguồn.

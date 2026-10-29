@@ -17,24 +17,9 @@ Sơ đồ tổng quan và ảnh minh chứng được trình bày ở [README](.
 
 `docker-compose.yml` khởi tạo PostgreSQL và Metabase; `airflow-docker-compose.yml` chạy Airflow trong môi trường Docker Desktop trên Windows. Streamlit được chạy trực tiếp bằng Python trên máy host.
 
-## 2. Pipeline Flow
+**Lưu ý về transaction:** lỗi trong bước ingestion có thể rollback lần nạp dữ liệu đó; nếu dbt lỗi sau khi ingestion đã commit thì bảng raw không tự động rollback.
 
-```mermaid
-flowchart TD
-  A["Trigger thủ công<br/>vietjobs_pipeline"] -->|"chạy task ingest_vietjobs"| B["Đọc và xác thực CSV"]
-  B -->|"header / số cột / số dòng hợp lệ"| C["COPY vào bảng tạm PostgreSQL"]
-  C -->|"kiểm tra số dòng và kiểu salary"| D{"Đạt kiểm tra?"}
-  D -->|"Không"| E["Lỗi / rollback ingestion"]
-  D -->|"Có"| F["Thay nội dung public.raw_vietjobs<br/>và commit"]
-  F -->|"task dbt_run"| G["dbt run: staging + 2 marts"]
-  G -->|"task dbt_test"| H["Kiểm thử not_null / unique"]
-  H -->|"PASS"| I["Dữ liệu sẵn sàng để phân tích"]
-  H -->|"FAIL"| J["Xem log dbt / Airflow"]
-```
-
-**Giới hạn transaction:** lỗi trong ingestion có thể rollback các thay đổi của lần nạp đó; lỗi dbt sau khi ingestion đã commit **không** rollback bảng raw.
-
-## 3. Data lineage và mô hình phân tích
+## 2. Data lineage và mô hình phân tích
 
 ```mermaid
 flowchart LR
@@ -56,11 +41,11 @@ flowchart LR
 | `mart_category_summary.sql` | `total_jobs`, `total_locations`, phân loại lương, trung bình midpoint theo ngành |
 | `mart_contract_summary.sql` | `total_jobs`, `negotiable_jobs`, `jobs_with_salary` theo ngành và loại hợp đồng |
 
-## 4. Script kiểm tra nguồn
+## 3. Script kiểm tra nguồn
 
 Các script trong `src/validation/` phục vụ khảo sát dữ liệu và kiểm tra bất thường **độc lập với DAG Airflow**. Chúng không mặc nhiên chạy trong ba task của `vietjobs_pipeline`. Phương pháp và các vấn đề dữ liệu đã được ghi ở [source_audit.md](source_audit.md).
 
-## 5. Quy tắc và giới hạn
+## 4. Quy tắc và giới hạn
 
 - `negotiable`: `salary_min = salary_max = 0` và `salary_avg = 'Thoả thuận'`.
 - `unavailable`: các bản ghi min/max cùng bằng 0 nhưng không ở trạng thái thỏa thuận.

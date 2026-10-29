@@ -1,0 +1,43 @@
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+profiles.yml
+.user.yml
+
+# Raw and generated data
+data/raw/*
+!data/raw/**/README.md
+data/processed/*
+!data/processed/**/README.md
+
+# dbt generated artifacts
+vietjobs_dbt/target/
+vietjobs_dbt/logs/
+vietjobs_dbt/dbt_packages/
+
+# Logs and temporary files
+logs/
+*.log
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local logs
+logs/
+*.log
+
+# Local Airflow state
+airflow/logs/
+airflow/logs/**

@@ -1,0 +1,34 @@
+
+version: 2
+
+models:
+  - name: stg_vietjobs
+    description: "Dữ liệu tuyển dụng đã chuẩn hóa từ bảng nguồn."
+    columns:
+      - name: job_title
+        data_tests:
+          - not_null
+      - name: category
+        data_tests:
+          - not_null
+
+  - name: mart_category_summary
+    description: "Tổng hợp chỉ số tuyển dụng theo ngành nghề."
+    columns:
+      - name: category
+        data_tests:
+          - unique
+          - not_null
+      - name: total_jobs
+        data_tests:
+          - not_null
+
+  - name: mart_contract_summary
+    description: "Tổng hợp tin tuyển dụng theo ngành và loại hợp đồng."
+    columns:
+      - name: category
+        data_tests:
+          - not_null
+      - name: total_jobs
+        data_tests:
+          - not_null

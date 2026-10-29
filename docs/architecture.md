@@ -1,101 +1,70 @@
-# System Architecture, Pipeline Flow and Logical ERD
+# Kiến trúc và luồng xử lý — Vietnam Job Market Intelligence
 
-The implemented project is a **local batch analytics pipeline** based on a historical VietJobs CSV. Airflow uses `schedule=None` (manual execution, not scheduled ingestion).
+Tài liệu này mô tả **các thành phần đã được triển khai trong repository**. Dự án xử lý dữ liệu CSV lịch sử theo batch; Airflow hiện chạy theo yêu cầu (`schedule=None`), không có lịch thu thập dữ liệu tự động.
 
-## 1. System architecture
+## 1. Kiến trúc hệ thống
 
-```mermaid
-flowchart LR
-  CSV["VietJobs CSV<br/>historical source"] --> ING["Python ingestion<br/>psycopg"]
-  AIR["Apache Airflow<br/>manual DAG"] -.controls.-> ING
-  AIR -.controls.-> DBT["dbt Core<br/>run and test"]
-  ING --> RAW[("PostgreSQL 16<br/>public.raw_vietjobs")]
-  RAW --> DBT
-  DBT --> STG[("analytics.stg_vietjobs<br/>view")]
-  STG --> CAT[("mart_category_summary<br/>view")]
-  STG --> CON[("mart_contract_summary<br/>view")]
-  STG --> STREAM["Streamlit + Plotly<br/>dashboard"]
-  CAT --> META["Metabase<br/>optional BI exploration"]
-  CON --> META
-```
+Sơ đồ tổng quan và ảnh minh chứng được trình bày ở [README](../README.md). Hệ thống gồm:
 
-The database and Metabase run under `docker-compose.yml`. Airflow runs under `airflow-docker-compose.yml`, reaching the host-published PostgreSQL port with `host.docker.internal` on Windows Docker Desktop. Streamlit runs from the host Python environment.
+| Thành phần | Mã nguồn / dịch vụ | Nhiệm vụ |
+| --- | --- | --- |
+| Nguồn | `data/raw/external/VietJobs.csv` (không commit) | CSV gồm 18 cột |
+| Ingestion | `src/ingestion/load_vietjobs.py` | Xác thực CSV, COPY qua bảng tạm, ghi vào raw trong transaction |
+| Lưu trữ | PostgreSQL 16 | Bảng `public.raw_vietjobs` và các view `analytics` |
+| Chuyển đổi | `vietjobs_dbt/` | Staging + hai marts dạng view |
+| Điều phối | `airflow/dags/vietjobs_pipeline.py` | Thực thi ba task tuần tự |
+| Phân tích | `dashboards/app.py`, Metabase | Streamlit đọc staging; Metabase có thể truy vấn các mart |
 
-## 2. Processing/data flow
+`docker-compose.yml` khởi tạo PostgreSQL và Metabase; `airflow-docker-compose.yml` chạy Airflow trong môi trường Docker Desktop trên Windows. Streamlit được chạy trực tiếp bằng Python trên máy host.
+
+## 2. Pipeline Flow
 
 ```mermaid
 flowchart TD
-  START["Manual Airflow trigger: vietjobs_pipeline"] --> INGEST["ingest_vietjobs<br/>load_vietjobs.py --replace"]
-  INGEST --> VALIDATE["Validate source header, record width and row count"]
-  VALIDATE --> STAGE["COPY into a temporary PostgreSQL table"]
-  STAGE --> CHECK{"Row counts and integer bounds valid?"}
-  CHECK -- No --> ROLLBACK["Fail and roll back transaction"]
-  CHECK -- Yes --> REPLACE["Replace public.raw_vietjobs inside transaction"]
-  REPLACE --> VERIFY["Verify target count and commit"]
-  VERIFY --> RUN["dbt_run<br/>staging + 2 marts"]
-  RUN --> TEST["dbt_test<br/>not_null + unique"]
-  TEST --> OK{"All checks pass?"}
-  OK -- Yes --> READY["Analytical views available"]
-  OK -- No --> LOGS["Inspect Airflow/dbt logs"]
+  A["Trigger thủ công<br/>vietjobs_pipeline"] -->|"chạy task ingest_vietjobs"| B["Đọc và xác thực CSV"]
+  B -->|"header / số cột / số dòng hợp lệ"| C["COPY vào bảng tạm PostgreSQL"]
+  C -->|"kiểm tra số dòng và kiểu salary"| D{"Đạt kiểm tra?"}
+  D -->|"Không"| E["Lỗi / rollback ingestion"]
+  D -->|"Có"| F["Thay nội dung public.raw_vietjobs<br/>và commit"]
+  F -->|"task dbt_run"| G["dbt run: staging + 2 marts"]
+  G -->|"task dbt_test"| H["Kiểm thử not_null / unique"]
+  H -->|"PASS"| I["Dữ liệu sẵn sàng để phân tích"]
+  H -->|"FAIL"| J["Xem log dbt / Airflow"]
 ```
 
-The ingestion transaction can roll back its own failed load, but a downstream dbt failure **does not undo** an already committed raw load. The raw table must exist before the first ingestion; see `sql/init_raw_vietjobs.sql`.
+**Giới hạn transaction:** lỗi trong ingestion có thể rollback các thay đổi của lần nạp đó; lỗi dbt sau khi ingestion đã commit **không** rollback bảng raw.
 
-## 3. Logical ERD / analytical lineage
-
-The application is not a normalized transactional system. There is one **raw physical table**, a staging **dbt view**, and two aggregate **dbt views**. Relations below express derivation and grouping only—not declared foreign keys or enforced relationships.
+## 3. Data lineage và mô hình phân tích
 
 ```mermaid
-erDiagram
-  RAW_VIETJOBS {
-    text job_title
-    text location
-    text country
-    text qualifications
-    text technical_skills
-    text soft_skills
-    text languages_required
-    text experience_required
-    text salary
-    text contract_type
-    text working_hours
-    text benefits
-    text description
-    text requirements_text
-    text category
-    int salary_min
-    int salary_max
-    text salary_avg
-  }
-  STG_VIETJOBS {
-    text job_title
-    text location
-    text category
-    int salary_min
-    int salary_max
-    text salary_avg
-    text salary_status
-  }
-  MART_CATEGORY_SUMMARY {
-    text category
-    bigint total_jobs
-    bigint total_locations
-    bigint negotiable_jobs
-    bigint jobs_with_salary
-    bigint salary_unavailable_jobs
-    bigint invalid_salary_jobs
-    numeric avg_salary_midpoint_million
-  }
-  MART_CONTRACT_SUMMARY {
-    text category
-    text contract_type
-    bigint total_jobs
-    bigint negotiable_jobs
-    bigint jobs_with_salary
-  }
-  RAW_VIETJOBS ||--|| STG_VIETJOBS : "transformed row-wise"
-  STG_VIETJOBS }o--|| MART_CATEGORY_SUMMARY : "aggregated by category"
-  STG_VIETJOBS }o--|| MART_CONTRACT_SUMMARY : "aggregated by category and contract type"
+flowchart LR
+  RAW["public.raw_vietjobs<br/>Bảng vật lý · 18 cột"] -->|"Chuẩn hóa và phân loại lương"| STG["analytics.stg_vietjobs<br/>View · 18 cột + salary_status"]
+  STG -->|"GROUP BY category"| CAT["analytics.mart_category_summary<br/>View · theo ngành"]
+  STG -->|"GROUP BY category, contract_type"| CON["analytics.mart_contract_summary<br/>View · theo ngành và hợp đồng"]
+  STG -->|"Truy vấn trực tiếp"| APP["Streamlit"]
+  CAT -->|"Phân tích BI"| META["Metabase"]
+  CON -->|"Phân tích BI"| META
 ```
 
-The staging view retains all 18 source columns and adds `salary_status`; only selected fields are shown in the ERD for readability. Grouped mart keys are analytical groupings, not SQL foreign keys.
+Đây là **quan hệ biến đổi dữ liệu (lineage)**, không phải quan hệ khóa ngoại. Mã nguồn không khai báo primary key / foreign key giữa raw, staging và marts; do đó không gán ký hiệu PK/FK giả định.
+
+### Các model đã triển khai
+
+| Model | Chi tiết |
+| --- | --- |
+| `stg_vietjobs.sql` | Giữ 18 trường nguồn, chuẩn hóa chuỗi, thêm `salary_status` |
+| `mart_category_summary.sql` | `total_jobs`, `total_locations`, phân loại lương, trung bình midpoint theo ngành |
+| `mart_contract_summary.sql` | `total_jobs`, `negotiable_jobs`, `jobs_with_salary` theo ngành và loại hợp đồng |
+
+## 4. Script kiểm tra nguồn
+
+Các script trong `src/validation/` phục vụ khảo sát dữ liệu và kiểm tra bất thường **độc lập với DAG Airflow**. Chúng không mặc nhiên chạy trong ba task của `vietjobs_pipeline`. Phương pháp và các vấn đề dữ liệu đã được ghi ở [source_audit.md](source_audit.md).
+
+## 5. Quy tắc và giới hạn
+
+- `negotiable`: `salary_min = salary_max = 0` và `salary_avg = 'Thoả thuận'`.
+- `unavailable`: các bản ghi min/max cùng bằng 0 nhưng không ở trạng thái thỏa thuận.
+- `invalid_range`: `salary_min > 0` và `salary_max < salary_min`.
+- `provided`: những trường hợp còn lại theo CASE hiện tại của staging model.
+
+**Lưu ý:** `provided` là tên nhãn do SQL hiện tại gán, không bảo đảm mọi bản ghi mang nhãn này đều có một khoảng lương dương và hợp lệ. Báo cáo/dashboard phải kiểm tra thêm điều kiện số khi tính thống kê lương. Đây là giới hạn hiện tại cần nêu đúng, không tự nhận là đã sửa SQL.

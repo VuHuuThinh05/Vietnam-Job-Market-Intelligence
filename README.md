@@ -212,7 +212,6 @@ Vietnam-Job-Market-Intelligence/
 │
 ├── airflow/
 │   ├── dags/
-│   │   └── vietjobs_pipeline.py
 │   └── Dockerfile
 │
 ├── dashboards/
@@ -221,11 +220,6 @@ Vietnam-Job-Market-Intelligence/
 │
 ├── docs/
 │   ├── images/
-│   │   ├── 01-system-architecture.png
-│   │   ├── 02-airflow-dag-success.png
-│   │   ├── 03-dbt-test-success-.png
-│   │   ├── 04-streamlit-dashboard.png
-│   │   └── 05-data.png
 │   ├── architecture.md
 │   └── source_audit.md
 │
@@ -234,23 +228,12 @@ Vietnam-Job-Market-Intelligence/
 │
 ├── src/
 │   ├── ingestion/
-│   │   └── load_vietjobs.py
 │   └── validation/
-│       ├── inspect_it_skills.py
-│       ├── inspect_salary_anomalies.py
-│       ├── inspect_source_data.py
-│       ├── inspect_special_values.py
-│       ├── profile_dataset.py
-│       └── profile_it_subset.py
 │
 ├── vietjobs_dbt/
 │   ├── models/
 │   │   ├── staging/
-│   │   │   ├── stg_vietjobs.sql
-│   │   │   └── schema.yml
 │   │   └── marts/
-│   │       ├── mart_category_summary.sql
-│   │       └── mart_contract_summary.sql
 │   └── dbt_project.yml
 │
 ├── .env.example
